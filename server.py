@@ -5,42 +5,98 @@ import asyncio
 
 import aiocoap.resource as resource
 import aiocoap
+import random
+
+PRIVATE_KEY = 1024
+
+
+class BlockedIPDB():
+    pass
+
+
+class Session():
+    def __init__(self, clientIp):
+        self.challenge = ''
+        self.ip = clientIp
+
+    def add_challenge(self, server_rand):
+        self.challenge = server_rand
 
 
 class SessionDB():
     def __init__(self):
         self.liveSessions = []
 
-    def add_live_session(self, session):
+    def add_live_session(self, ip):
+        session = Session(ip)
         self.liveSessions.append(session)
 
-    def remove_live_session(self, session):
-        self.liveSessions.remove(session)
+    def remove_live_session(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                self.liveSessions.remove(session)
 
-    def is_session_live(self, session):
-        return session in self.liveSessions
+    def is_session_live(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return True
+        return False
+
+    def add_server_challenge(self, ip, server_rand):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                session.challenge = server_rand
+
+    def get_server_challenge(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.challenge
 
     def get_session_len(self):
         return len(self.liveSessions)
 
 
+class PresharedDB():
+    def __init__(self):
+        self.keys = {}
+
+    def get_client_key(self, clientID):
+        return int(clientID) * 7  # to be replaced by a unique hash
+
+
 class KeyExchangeResourceServerAuth(resource.Resource):
 
-    def __init__(self, sessionDB):
+    def __init__(self, sessionDB, preSharedDB):
         super().__init__()
         # self.set_up_database_of_client_IDS()
         self.sessionDB = sessionDB
+        self.preSharedDB = preSharedDB
 
     async def render_put(self, request):
         # await updateNumberOfAttempts(request.remote.hostinfo)
         # if isHostBlocked(request.remote.hostinfo):
         # block mechanism: (maybe i need to go to lower layers)
-        if not self.sessionDB.is_session_live(
-                request.remote.hostinfo.split(':')):
-            self.sessionDB.add_live_session(request.remote.hostinfo.split(':'))
-            return aiocoap.Message(payload=b"I got the second message")
+        clientIp = request.remote.hostinfo.split(':')[0]
+        if not self.sessionDB.is_session_live(clientIp):
+            self.sessionDB.add_live_session(clientIp)
+            messages = request.payload.decode('utf-8').split(' ')
+            client_ID = int(messages[1])
+            client_rand = messages[2]
+            server_rand = random.randint(0, 100)
+            self.sessionDB.add_server_challenge(clientIp, str(server_rand))
+            Rs = PRIVATE_KEY * self.preSharedDB.get_client_key(client_ID)
+            payload_str = client_rand + ' ' + str(server_rand) + ' ' + str(Rs)
+            payload = bytes(payload_str, encoding='utf-8')
+            return aiocoap.Message(payload=payload)
         else:
-            print("I got the third message")
+            client_response = request.payload.decode('utf-8').split(' ')
+            server_rand_i = client_response[0]
+            Rc = client_response[1]
+            server_rand = self.sessionDB.get_server_challenge(clientIp)
+            if(server_rand == str(server_rand_i)):
+                sessionKey = PRIVATE_KEY * int(Rc)
+                print(sessionKey)
+                self.sessionDB.remove_live_session(clientIp)
             return aiocoap.Message()
         # #add session to database
         # elif self.step == '2':
@@ -138,10 +194,12 @@ logging.getLogger("coap-server").setLevel(logging.DEBUG)
 async def main():
     root = resource.Site()
     sessionDB = SessionDB()
+    presharedDB = PresharedDB()
     root.add_resource(['.well-known', 'core'],
                       resource.WKCResource(root.get_resources_as_linkheader))
     root.add_resource(['time'], TimeResource()),
-    root.add_resource(['ake'], KeyExchangeResourceServerAuth(sessionDB))
+    root.add_resource(['ake'], KeyExchangeResourceServerAuth(
+        sessionDB, presharedDB))
 
     await aiocoap.Context.create_server_context(
                          bind=('127.0.0.1', 5683), site=root)
