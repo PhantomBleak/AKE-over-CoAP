@@ -6,8 +6,17 @@ import asyncio
 import aiocoap.resource as resource
 import aiocoap
 import random
+from aiocoap.options import Options
+from aiocoap import OptionNumber
+import hashlib
 
-PRIVATE_KEY = 1024
+import json
+from base64 import b64encode, b64decode
+
+from AES_application import encryption, decryption, encryptionWithID
+
+from timeDifCalculator import isMessageFresh, getCurrrentTime
+
 
 
 class BlockedIPDB():
@@ -16,11 +25,12 @@ class BlockedIPDB():
 
 class Session():
     def __init__(self, clientIp):
-        self.challenge = ''
+        self.serverRandom = ''
+        self.serverChallenge = ''
+        self.clientChallenge = ''
+        self.client_ID = ''
+        self.session_key = ''
         self.ip = clientIp
-
-    def add_challenge(self, server_rand):
-        self.challenge = server_rand
 
 
 class SessionDB():
@@ -42,26 +52,65 @@ class SessionDB():
                 return True
         return False
 
-    def add_server_challenge(self, ip, server_rand):
+    def add_server_random(self, ip, rs):
         for session in self.liveSessions:
             if session.ip == ip:
-                session.challenge = server_rand
+                session.serverRandom = rs
 
-    def get_server_challenge(self, ip):
+    def add_client_challenge(self, ip, client_rand):
         for session in self.liveSessions:
             if session.ip == ip:
-                return session.challenge
+                session.clientChallenge = client_rand
+
+    def add_client_ID(self, ip, client_ID):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                session.client_ID = client_ID 
+
+    def get_client_ID(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.client_ID
+
+    def get_server_random(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.serverRandom
+
+    def get_client_challenge(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.clientChallenge
 
     def get_session_len(self):
         return len(self.liveSessions)
+    
+    def add_session_key(self, ip, session_key):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                session.session_key = session_key
 
+    def get_session_key(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.session_key
+
+    def add_server_challenge(self, ip, server_rand):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                session.serverChallenge = server_rand
+    
+    def get_server_challenge(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.serverChallenge
 
 class PresharedDB():
     def __init__(self):
         self.keys = {}
 
     def get_client_key(self, clientID):
-        return int(clientID) * 7  # to be replaced by a unique hash
+        return b'vm\xaa\xae\xf5\x0b\xe0V\xfd\xbf\xa4\xc3\xbb\x03\xf7J'  # to be replaced by a random key
 
 
 class KeyExchangeResourceServerAuth(resource.Resource):
@@ -79,31 +128,74 @@ class KeyExchangeResourceServerAuth(resource.Resource):
         clientIp = request.remote.hostinfo.split(':')[0]
         if not self.sessionDB.is_session_live(clientIp):
             self.sessionDB.add_live_session(clientIp)
-            messages = request.payload.decode('utf-8').split(' ')
-            client_ID = int(messages[1])
-            client_rand = messages[2]
-            server_rand = random.randint(0, 100)
-            self.sessionDB.add_server_challenge(clientIp, str(server_rand))
-            Rs = PRIVATE_KEY * self.preSharedDB.get_client_key(client_ID)
-            payload_str = client_rand + ' ' + str(server_rand) + ' ' + str(Rs)
-            payload = bytes(payload_str, encoding='utf-8')
-            return aiocoap.Message(payload=payload)
+            messages = request.payload.decode('utf-8')
+            message = json.loads(messages)
+            client_ID = int(b64decode(message['id']))
+            msg = decryption(messages,self.preSharedDB.get_client_key(client_ID))
+            print("retrieved client ID {}".format(client_ID))
+            print("retrieved decrypted message " + str(msg))
+            hci = msg[0:40].decode('utf-8')
+            hashed = hashlib.sha1(str(client_ID).encode()).hexdigest()
+            print("retrieved hash value of client " + hci)
+            print("calculated hash value of client " + hashed)
+            client_rand = msg[40:42].decode('utf-8')
+            print("retrieved client rand " + client_rand)
+            t1 = msg[42:].decode('utf-8')
+            t2 = getCurrrentTime()
+            print("T1 " + t1)
+            print("T2 " + t2)
+            isFresh = isMessageFresh(t1,t2)
+            if isFresh and hci == hashed:
+                self.sessionDB.add_client_challenge(clientIp, str(client_rand))
+                self.sessionDB.add_client_ID(clientIp, client_ID)
+                rs = random.randint(10, 49)
+                print("chosen random number {}".format(rs))
+                self.sessionDB.add_server_random(clientIp, str(rs))
+                server_rand = rs * 2
+                self.sessionDB.add_server_challenge(clientIp, str(server_rand))
+                print("chosen challenge {}".format(server_rand))
+                enc_str = client_rand + str(server_rand) + str(t2)
+                print("second message to be encrypted " + enc_str)
+                enc_bytes = bytes(enc_str, encoding='utf-8')
+                payload = encryption(enc_bytes, self.preSharedDB.get_client_key(client_ID))
+                return aiocoap.Message(payload=payload)
         else:
-            client_response = request.payload.decode('utf-8').split(' ')
-            server_rand_i = client_response[0]
-            Rc = client_response[1]
-            server_rand = self.sessionDB.get_server_challenge(clientIp)
-            if(server_rand == str(server_rand_i)):
-                sessionKey = PRIVATE_KEY * int(Rc)
-                print(sessionKey)
-                self.sessionDB.remove_live_session(clientIp)
-            return aiocoap.Message()
+            req = request.payload.decode('utf-8')
+            client_ID = self.sessionDB.get_client_ID(clientIp)
+            req = decryption(req,self.preSharedDB.get_client_key(client_ID))
+            t3 = req[2:].decode('utf-8')
+            t4 = getCurrrentTime()
+            print("T3 " + t3)
+            print("T4 " + t4)
+            if isMessageFresh(t3,t4):
+                server_rand = self.sessionDB.get_server_challenge(clientIp)
+                client_response = req[:2].decode('utf-8')
+                if client_response == server_rand:
+                    rs = self.sessionDB.get_server_random(clientIp)
+                    client_rand = self.sessionDB.get_client_challenge(clientIp)
+                    session_key = int(rs) * int(client_rand)
+                    print("built session key {}".format(session_key))
+                    self.sessionDB.add_session_key(clientIp, session_key)
+            # client_response = request.payload.decode('utf-8').split(' ')
+            # server_rand_i = client_response[0]
+            # # Rc = client_response[1]
+            # server_rand = self.sessionDB.get_server_challenge(clientIp)
+            # if(server_rand == str(server_rand_i)):
+            #     # sessionKey = PRIVATE_KEY * int(Rc)
+            #     sessionKey = int(server_rand) * int(self.sessionDB.
+            #         get_client_challenge(clientIp))
+            #     #print(sessionKey)
+            #     self.sessionDB.remove_live_session(clientIp)
+            # return aiocoap.Message()
         # #add session to database
         # elif self.step == '2':
         #     print("I'm over here now!")
         #     #if isSessionCreated()
         #     print("I got the third message")
-        #     return aiocoap.Message.NoResponse
+            # I could not add no_respnse option here in a clean way
+            # (by adding a No_RESPONSE option)
+                resp = aiocoap.Message(no_response=26)
+                return resp
 
 
 class BlockResource(resource.Resource):
