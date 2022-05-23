@@ -3,6 +3,35 @@ import json
 from base64 import b64encode, b64decode
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
+from Crypto.PublicKey import ECC
+
+def generatorPoint():
+    p = ECC.EccPoint(72322606651807384847403831375643175681500117958841208463667062180171793088469,
+    8856254923922720309771422189140314456949507932337029017781130762969692952443,
+    curve='p256')
+    return p
+
+p = ECC.EccPoint(72322606651807384847403831375643175681500117958841208463667062180171793088469,
+    8856254923922720309771422189140314456949507932337029017781130762969692952443,
+    curve='p256')
+
+def multiplyGeneratorByScalar(s):
+    mul = s*p
+    return (mul.x, mul.y)
+
+def multiplyPointByScalar(s, x, y):
+    point = ECC.EccPoint(int(x),int(y))
+    point = int(s)*point
+    return (point.x,point.y)
+
+def double(x,y):
+    d = 2*ECC.EccPoint(int(x),int(y))
+    return (d.x,d.y)
+
+def is_double(x,y, xprime, yprime):
+    p1 = ECC.EccPoint(x,y)
+    p2 = ECC.EccPoint(int(xprime),int(yprime))
+    return 2*p1 == p2
 
 def encryption(data, key):
     #encryption
@@ -40,3 +69,4 @@ def decryption(result, key):
 
     except(ValueError, KeyError):
         print("Invalid decryption")
+generatorPoint()
