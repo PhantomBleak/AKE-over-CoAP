@@ -14,6 +14,7 @@ import json
 from base64 import b64encode, b64decode
 
 from AES_application import encryption, decryption, multiplyGeneratorByScalar, double, is_double, multiplyPointByScalar
+from AES_application import is_plus_generator, plus_generator
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
@@ -156,8 +157,8 @@ class KeyExchangeResourceServerAuth(resource.Resource):
                 self.sessionDB.add_server_challenge(clientIp, server_rand)
                 print("server rand x {}".format(server_rand[0]))
                 print("server rand y {}".format(server_rand[1]))
-                client_rand_doubled = double(client_rand[0],client_rand[1])
-                enc_str = str(client_rand_doubled[0]) + ' ' + str(client_rand_doubled[1]) + ' ' + str(server_rand[0]) + ' ' + str(server_rand[1]) + ' ' + str(t2)
+                client_rand_plus = plus_generator(client_rand[0],client_rand[1])
+                enc_str = str(client_rand_plus[0]) + ' ' + str(client_rand_plus[1]) + ' ' + str(server_rand[0]) + ' ' + str(server_rand[1]) + ' ' + str(t2)
                 print("second message to be encrypted " + enc_str)
                 enc_bytes = bytes(enc_str, encoding='utf-8')
                 payload = encryption(enc_bytes, self.preSharedDB.get_client_key(client_ID))
@@ -172,7 +173,7 @@ class KeyExchangeResourceServerAuth(resource.Resource):
             print("T4 " + t4)
             if isMessageFresh(t3,t4):
                 server_rand = self.sessionDB.get_server_challenge(clientIp)
-                if is_double(server_rand[0],server_rand[1], resp_x, resp_y):
+                if is_plus_generator(server_rand[0],server_rand[1], resp_x, resp_y):
                     rs = self.sessionDB.get_server_random(clientIp)
                     client_rand = self.sessionDB.get_client_challenge(clientIp)
                     session_key = multiplyPointByScalar(rs, client_rand[0], client_rand[1])

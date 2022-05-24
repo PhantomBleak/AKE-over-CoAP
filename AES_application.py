@@ -33,6 +33,15 @@ def is_double(x,y, xprime, yprime):
     p2 = ECC.EccPoint(int(xprime),int(yprime))
     return 2*p1 == p2
 
+def plus_generator(x,y):
+    r = p + ECC.EccPoint(int(x),int(y))
+    return (r.x, r.y)
+
+def is_plus_generator(x,y, xprime, yprime):
+    p1 = ECC.EccPoint(x,y)
+    p2 = ECC.EccPoint(int(xprime),int(yprime))
+    return p + p1 == p2
+    
 def encryption(data, key):
     #encryption
     header = b""

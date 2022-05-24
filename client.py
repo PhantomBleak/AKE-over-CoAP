@@ -7,13 +7,13 @@ import json
 
 from aiocoap import Context, Message, PUT, OptionNumber
 from aiocoap.options import Options
-from clientAuthentication import PRE_SHARED_KEY
 
 from server import PRIVATE_KEY
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
 from AES_application import encryption, decryption, encryptionWithID, multiplyGeneratorByScalar, double, is_double, multiplyPointByScalar
+from AES_application import plus_generator, is_plus_generator
 from Crypto.PublicKey import ECC
 
 logging.basicConfig(level=logging.INFO)
@@ -60,15 +60,15 @@ async def handshake():
         if isMessageFresh(t2,t3):
             print('retrieved client_rand_x ' + resp_x)
             print('retrieved client_rand_y ' + resp_y)
-            if(is_double(client_rand[0], client_rand[1], resp_x, resp_y)):
+            if(is_plus_generator(client_rand[0], client_rand[1], resp_x, resp_y)):
                 server_rand = (server_rand_x, server_rand_y)
                 print('retrieved server_rand x ' + server_rand_x)
                 print('retrieved server_rand y ' + server_rand_y)
                 session_key = multiplyPointByScalar(rc, server_rand_x, server_rand_y)
                 print('built session key x {}'.format(session_key[0]))
                 print('built session key y {}'.format(session_key[1]))
-                server_rand_doubled = double(server_rand_x, server_rand_y)
-                enc_str = str(server_rand_doubled[0]) + ' ' + str(server_rand_doubled[1]) + ' ' + str(t3)
+                server_rand_plust = plus_generator(server_rand_x, server_rand_y)
+                enc_str = str(server_rand_plust[0]) + ' ' + str(server_rand_plust[1]) + ' ' + str(t3)
                 enc_bytes = bytes(enc_str, encoding='utf-8')
                 payload = encryption(enc_bytes,PRE_SHARED_KEY)
                 request = Message(mtype=1,code=PUT, payload=payload,
