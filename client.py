@@ -7,13 +7,14 @@ import json
 
 from aiocoap import Context, Message, PUT, OptionNumber
 from aiocoap.options import Options
-from clientAuthentication import PRE_SHARED_KEY
 
 from server import PRIVATE_KEY
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
-from AES_application import encryption, decryption, encryptionWithID
+from AES_application import encryption, decryption, encryptionWithID, multiplyGeneratorByScalar, double, is_double, multiplyPointByScalar
+from AES_application import plus_generator, is_plus_generator
+from Crypto.PublicKey import ECC
 
 logging.basicConfig(level=logging.INFO)
 CLIENT_ID = 10 #28 bytes
@@ -27,14 +28,17 @@ PRE_SHARED_KEY = b'vm\xaa\xae\xf5\x0b\xe0V\xfd\xbf\xa4\xc3\xbb\x03\xf7J' #16 byt
 async def handshake():
     context = await Context.create_client_context()
     client_id = CLIENT_ID
-    rc = random.randint(10, 49)
-    client_rand = rc * 2
+    rc = random.randint(1, 100)
+    client_rand = multiplyGeneratorByScalar(rc)
     hashed = hashlib.sha1(str(client_id).encode()).hexdigest()
     print("hash value of Ci " + hashed)
     print("hash size in bytes {}".format(sys.getsizeof(hashed)))
-    print("client rand {}".format(client_rand))
+    print("client rand x {}".format(client_rand[0]))
+    print("client rand x size in bytes {}".format(sys.getsizeof(client_rand[0])))
+    print("client rand y {}".format(client_rand[1]))
+    print("client rand y size in bytes {}".format(sys.getsizeof(client_rand[1])))
     t1 = getCurrrentTime()
-    enc_str = hashlib.sha1(str(client_id).encode()).hexdigest() + str(client_rand) + str(t1)
+    enc_str = hashlib.sha1(str(client_id).encode()).hexdigest() + str(client_rand[0]) + ' ' + str(client_rand[1]) + ' ' + str(t1)
     print("message to be encrypted " + enc_str)
     enc_bytes = bytes(enc_str, encoding='utf-8')
     payload = encryptionWithID(enc_bytes, PRE_SHARED_KEY, str(client_id))
@@ -49,19 +53,22 @@ async def handshake():
         server_response = response.payload.decode('utf-8')
         msg = decryption(server_response,PRE_SHARED_KEY)
         print(msg)
-        t2 = msg[4:].decode('utf-8')
+        resp_x, resp_y, server_rand_x, server_rand_y, t2 = msg.decode('utf-8').split(' ')
         t3 = getCurrrentTime()
         print("T2 " + t2)
         print("T3 " + t3)
         if isMessageFresh(t2,t3):
-            ret_client_rand = msg[0:2].decode('utf-8')
-            print('retrieved client_rand ' + ret_client_rand)
-            if(ret_client_rand == str(client_rand)):
-                server_rand = msg[2:4].decode('utf-8')
-                print('retrieved server_rand ' + server_rand)
-                sessionKey = int(server_rand)*rc
-                print("built session key {}".format(sessionKey))
-                enc_str = server_rand + str(t3)
+            print('retrieved client_rand_x ' + resp_x)
+            print('retrieved client_rand_y ' + resp_y)
+            if(is_plus_generator(client_rand[0], client_rand[1], resp_x, resp_y)):
+                server_rand = (server_rand_x, server_rand_y)
+                print('retrieved server_rand x ' + server_rand_x)
+                print('retrieved server_rand y ' + server_rand_y)
+                session_key = multiplyPointByScalar(rc, server_rand_x, server_rand_y)
+                print('built session key x {}'.format(session_key[0]))
+                print('built session key y {}'.format(session_key[1]))
+                server_rand_plust = plus_generator(server_rand_x, server_rand_y)
+                enc_str = str(server_rand_plust[0]) + ' ' + str(server_rand_plust[1]) + ' ' + str(t3)
                 enc_bytes = bytes(enc_str, encoding='utf-8')
                 payload = encryption(enc_bytes,PRE_SHARED_KEY)
                 request = Message(mtype=1,code=PUT, payload=payload,

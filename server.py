@@ -13,7 +13,8 @@ import hashlib
 import json
 from base64 import b64encode, b64decode
 
-from AES_application import encryption, decryption, encryptionWithID
+from AES_application import encryption, decryption, multiplyGeneratorByScalar, double, is_double, multiplyPointByScalar
+from AES_application import is_plus_generator, plus_generator
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
@@ -138,23 +139,26 @@ class KeyExchangeResourceServerAuth(resource.Resource):
             hashed = hashlib.sha1(str(client_ID).encode()).hexdigest()
             print("retrieved hash value of client " + hci)
             print("calculated hash value of client " + hashed)
-            client_rand = msg[40:42].decode('utf-8')
-            print("retrieved client rand " + client_rand)
-            t1 = msg[42:].decode('utf-8')
+            client_rand_x, client_rand_y, t1 = (msg[40:].decode('utf-8')).split(' ')
+            print("retrieved client_rand x " + client_rand_x)
+            print("retrieved client_rand y " + client_rand_y)
+            client_rand = (client_rand_x, client_rand_y)
             t2 = getCurrrentTime()
             print("T1 " + t1)
             print("T2 " + t2)
             isFresh = isMessageFresh(t1,t2)
             if isFresh and hci == hashed:
-                self.sessionDB.add_client_challenge(clientIp, str(client_rand))
+                self.sessionDB.add_client_challenge(clientIp, client_rand)
                 self.sessionDB.add_client_ID(clientIp, client_ID)
-                rs = random.randint(10, 49)
+                rs = random.randint(1, 100)
                 print("chosen random number {}".format(rs))
                 self.sessionDB.add_server_random(clientIp, str(rs))
-                server_rand = rs * 2
-                self.sessionDB.add_server_challenge(clientIp, str(server_rand))
-                print("chosen challenge {}".format(server_rand))
-                enc_str = client_rand + str(server_rand) + str(t2)
+                server_rand = multiplyGeneratorByScalar(rs)
+                self.sessionDB.add_server_challenge(clientIp, server_rand)
+                print("server rand x {}".format(server_rand[0]))
+                print("server rand y {}".format(server_rand[1]))
+                client_rand_plus = plus_generator(client_rand[0],client_rand[1])
+                enc_str = str(client_rand_plus[0]) + ' ' + str(client_rand_plus[1]) + ' ' + str(server_rand[0]) + ' ' + str(server_rand[1]) + ' ' + str(t2)
                 print("second message to be encrypted " + enc_str)
                 enc_bytes = bytes(enc_str, encoding='utf-8')
                 payload = encryption(enc_bytes, self.preSharedDB.get_client_key(client_ID))
@@ -163,18 +167,18 @@ class KeyExchangeResourceServerAuth(resource.Resource):
             req = request.payload.decode('utf-8')
             client_ID = self.sessionDB.get_client_ID(clientIp)
             req = decryption(req,self.preSharedDB.get_client_key(client_ID))
-            t3 = req[2:].decode('utf-8')
+            resp_x, resp_y, t3 = req.decode('utf-8').split(' ')
             t4 = getCurrrentTime()
             print("T3 " + t3)
             print("T4 " + t4)
             if isMessageFresh(t3,t4):
                 server_rand = self.sessionDB.get_server_challenge(clientIp)
-                client_response = req[:2].decode('utf-8')
-                if client_response == server_rand:
+                if is_plus_generator(server_rand[0],server_rand[1], resp_x, resp_y):
                     rs = self.sessionDB.get_server_random(clientIp)
                     client_rand = self.sessionDB.get_client_challenge(clientIp)
-                    session_key = int(rs) * int(client_rand)
-                    print("built session key {}".format(session_key))
+                    session_key = multiplyPointByScalar(rs, client_rand[0], client_rand[1])
+                    print('built session key x {}'.format(session_key[0]))
+                    print('built session key y {}'.format(session_key[1]))
                     self.sessionDB.add_session_key(clientIp, session_key)
             # client_response = request.payload.decode('utf-8').split(' ')
             # server_rand_i = client_response[0]
