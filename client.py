@@ -8,7 +8,6 @@ import json
 from aiocoap import Context, Message, PUT, OptionNumber
 from aiocoap.options import Options
 
-from server import PRIVATE_KEY
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
@@ -16,9 +15,10 @@ from AES_application import encryption, decryption, encryptionWithID, multiplyGe
 from AES_application import plus_generator, is_plus_generator
 from Crypto.PublicKey import ECC
 
+import time
+
 logging.basicConfig(level=logging.INFO)
 CLIENT_ID = 10 #28 bytes
-PRIVATE_KEY = 1050
 #PRE_SHARED_KEY = get_random_bytes(16)
 PRE_SHARED_KEY = b'vm\xaa\xae\xf5\x0b\xe0V\xfd\xbf\xa4\xc3\xbb\x03\xf7J' #16 bytes
 
@@ -27,6 +27,9 @@ PRE_SHARED_KEY = b'vm\xaa\xae\xf5\x0b\xe0V\xfd\xbf\xa4\xc3\xbb\x03\xf7J' #16 byt
 ## OR FORGET ABOUT THESE FANCY HEADERS
 async def handshake():
     context = await Context.create_client_context()
+    curr_time = round(time.time()*1000)
+    print('start time')
+    print(curr_time)
     client_id = CLIENT_ID
     rc = random.randint(1, 100)
     client_rand = multiplyGeneratorByScalar(rc)
@@ -84,11 +87,15 @@ async def handshake():
                 # request.opt.add_option(option)
                 # print(request.opt.no_response)
                 # auth2.opt.add_option(option)
+                curr_time = round(time.time()*1000)
+                print('finish time')
+                print(curr_time)
                 future_response = context.request(request).response
                 try:
                     response = await asyncio.wait_for(future_response, timeout=1) 
                     print('Result: %s\n%r'%(response.code, response.payload))
-                except asyncio.TimeoutError: 
+                except asyncio.TimeoutError:
+
                     return
 
     except Exception as e:

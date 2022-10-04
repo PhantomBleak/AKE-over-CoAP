@@ -18,7 +18,7 @@ from AES_application import is_plus_generator, plus_generator
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
-
+import time
 
 class BlockedIPDB():
     pass
@@ -126,6 +126,9 @@ class KeyExchangeResourceServerAuth(resource.Resource):
         # await updateNumberOfAttempts(request.remote.hostinfo)
         # if isHostBlocked(request.remote.hostinfo):
         # block mechanism: (maybe i need to go to lower layers)
+        curr_time = round(time.time()*1000)
+        print('start time')
+        print(curr_time)
         clientIp = request.remote.hostinfo.split(':')[0]
         if not self.sessionDB.is_session_live(clientIp):
             self.sessionDB.add_live_session(clientIp)
@@ -179,6 +182,9 @@ class KeyExchangeResourceServerAuth(resource.Resource):
                     session_key = multiplyPointByScalar(rs, client_rand[0], client_rand[1])
                     print('built session key x {}'.format(session_key[0]))
                     print('built session key y {}'.format(session_key[1]))
+                    curr_time = round(time.time()*1000)
+                    print('finish time')
+                    print(curr_time)
                     self.sessionDB.add_session_key(clientIp, session_key)
             # client_response = request.payload.decode('utf-8').split(' ')
             # server_rand_i = client_response[0]

@@ -5,41 +5,35 @@ from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from Crypto.PublicKey import ECC
 
-def generatorPoint():
-    p = ECC.EccPoint(72322606651807384847403831375643175681500117958841208463667062180171793088469,
-    8856254923922720309771422189140314456949507932337029017781130762969692952443,
-    curve='p256')
-    return p
-
-p = ECC.EccPoint(72322606651807384847403831375643175681500117958841208463667062180171793088469,
-    8856254923922720309771422189140314456949507932337029017781130762969692952443,
-    curve='p256')
+p = ECC.EccPoint(117812161263436946737282484343310064665180535357016373416879082147939404277809514858788439644911793978499419995990477371552926308078495,
+    19,
+    curve='ed448')
 
 def multiplyGeneratorByScalar(s):
     mul = s*p
     return (mul.x, mul.y)
 
 def multiplyPointByScalar(s, x, y):
-    point = ECC.EccPoint(int(x),int(y))
+    point = ECC.EccPoint(int(x),int(y),curve='ed448')
     point = int(s)*point
     return (point.x,point.y)
 
 def double(x,y):
-    d = 2*ECC.EccPoint(int(x),int(y))
+    d = 2*ECC.EccPoint(int(x),int(y),curve='ed448')
     return (d.x,d.y)
 
 def is_double(x,y, xprime, yprime):
-    p1 = ECC.EccPoint(x,y)
-    p2 = ECC.EccPoint(int(xprime),int(yprime))
+    p1 = ECC.EccPoint(x,y,curve='ed448')
+    p2 = ECC.EccPoint(int(xprime),int(yprime),curve='ed448')
     return 2*p1 == p2
 
 def plus_generator(x,y):
-    r = p + ECC.EccPoint(int(x),int(y))
+    r = p + ECC.EccPoint(int(x),int(y),curve='ed448')
     return (r.x, r.y)
 
 def is_plus_generator(x,y, xprime, yprime):
-    p1 = ECC.EccPoint(x,y)
-    p2 = ECC.EccPoint(int(xprime),int(yprime))
+    p1 = ECC.EccPoint(x,y,curve='ed448')
+    p2 = ECC.EccPoint(int(xprime),int(yprime),curve='ed448')
     return p + p1 == p2
     
 def encryption(data, key):
@@ -78,4 +72,5 @@ def decryption(result, key):
 
     except(ValueError, KeyError):
         print("Invalid decryption")
-generatorPoint()
+        
+point = plus_generator(p.x,p.y)
