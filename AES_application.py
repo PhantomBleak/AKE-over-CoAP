@@ -27,15 +27,24 @@ def is_double(x,y, xprime, yprime):
     p2 = ECC.EccPoint(int(xprime),int(yprime),curve='ed448')
     return 2*p1 == p2
 
-def plus_generator(x,y):
+def plus_P(x,y):
     r = p + ECC.EccPoint(int(x),int(y),curve='ed448')
     return (r.x, r.y)
 
-def is_plus_generator(x,y, xprime, yprime):
+def plus_2P(x,y):
+    r = p + ECC.EccPoint(int(x),int(y),curve='ed448')
+    r = p + r
+    return (r.x, r.y)
+
+def verifyChallenge(x,y, xprime, yprime):
     p1 = ECC.EccPoint(x,y,curve='ed448')
     p2 = ECC.EccPoint(int(xprime),int(yprime),curve='ed448')
-    return p + p1 == p2
-    
+    if p + p1 == p2:
+        return 1
+    if p + p + p1 == p2:
+        return 2
+    return -1
+
 def encryption(data, key):
     #encryption
     header = b""
@@ -48,7 +57,6 @@ def encryption(data, key):
     return bytes(result, encoding='utf-8')
 
 def encryptionWithID(data, key, ID):
-    #encryption
     header = b""
     cipher = AES.new(key, AES.MODE_CCM)
     cipher.update(header)
@@ -60,7 +68,6 @@ def encryptionWithID(data, key, ID):
     return bytes(result, encoding='utf-8')
 
 def decryption(result, key):
-    #decryption
     try:
         b64 = json.loads(result)
         json_k = [ 'nonce', 'header', 'ciphertext', 'tag' ]
@@ -72,5 +79,3 @@ def decryption(result, key):
 
     except(ValueError, KeyError):
         print("Invalid decryption")
-        
-point = plus_generator(p.x,p.y)

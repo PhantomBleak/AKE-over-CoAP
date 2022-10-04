@@ -2,27 +2,26 @@ import datetime
 import logging
 
 import asyncio
+from tabnanny import verbose
 
 import aiocoap.resource as resource
 import aiocoap
 import random
 from aiocoap.options import Options
 from aiocoap import OptionNumber
-import hashlib
+import hashlib, sys
 
 import json
 from base64 import b64encode, b64decode
 
 from AES_application import encryption, decryption, multiplyGeneratorByScalar, double, is_double, multiplyPointByScalar
-from AES_application import is_plus_generator, plus_generator
+from AES_application import verifyChallenge , plus_P, plus_2P
 
 from timeDifCalculator import isMessageFresh, getCurrrentTime
 
 import time
-
-class BlockedIPDB():
-    pass
-
+from Crypto.Protocol.KDF import PBKDF2
+from Crypto.Hash import SHA512
 
 class Session():
     def __init__(self, clientIp):
@@ -32,7 +31,7 @@ class Session():
         self.client_ID = ''
         self.session_key = ''
         self.ip = clientIp
-
+        self.shouldUpdateY = True
 
 class SessionDB():
     def __init__(self):
@@ -73,6 +72,11 @@ class SessionDB():
             if session.ip == ip:
                 return session.client_ID
 
+    def get_long_key_status(self, ip):
+        for session in self.liveSessions:
+            if session.ip == ip:
+                return session.shouldUpdateY
+
     def get_server_random(self, ip):
         for session in self.liveSessions:
             if session.ip == ip:
@@ -111,60 +115,52 @@ class PresharedDB():
         self.keys = {}
 
     def get_client_key(self, clientID):
-        return b'vm\xaa\xae\xf5\x0b\xe0V\xfd\xbf\xa4\xc3\xbb\x03\xf7J'  # to be replaced by a random key
+        return b'vm\xaa\xae\xf5\x0b\xe0V\xfd\xbf\xa4\xc3\xbb\x03\xf7J'
+    
+    def set_client_key(self, clientID, key):
+        pass
 
-
+startTime = None
+finishTime = None
 class KeyExchangeResourceServerAuth(resource.Resource):
 
     def __init__(self, sessionDB, preSharedDB):
         super().__init__()
-        # self.set_up_database_of_client_IDS()
         self.sessionDB = sessionDB
         self.preSharedDB = preSharedDB
 
     async def render_put(self, request):
-        # await updateNumberOfAttempts(request.remote.hostinfo)
-        # if isHostBlocked(request.remote.hostinfo):
-        # block mechanism: (maybe i need to go to lower layers)
-        curr_time = round(time.time()*1000)
-        print('start time')
-        print(curr_time)
+        global startTime, finishTime
         clientIp = request.remote.hostinfo.split(':')[0]
         if not self.sessionDB.is_session_live(clientIp):
+            curr_time = round(time.time()*1000)
+            startTime = curr_time
             self.sessionDB.add_live_session(clientIp)
             messages = request.payload.decode('utf-8')
             message = json.loads(messages)
             client_ID = int(b64decode(message['id']))
             msg = decryption(messages,self.preSharedDB.get_client_key(client_ID))
-            print("retrieved client ID {}".format(client_ID))
-            print("retrieved decrypted message " + str(msg))
             hci = msg[0:40].decode('utf-8')
             hashed = hashlib.sha1(str(client_ID).encode()).hexdigest()
-            print("retrieved hash value of client " + hci)
-            print("calculated hash value of client " + hashed)
             client_rand_x, client_rand_y, t1 = (msg[40:].decode('utf-8')).split(' ')
-            print("retrieved client_rand x " + client_rand_x)
-            print("retrieved client_rand y " + client_rand_y)
             client_rand = (client_rand_x, client_rand_y)
             t2 = getCurrrentTime()
-            print("T1 " + t1)
-            print("T2 " + t2)
             isFresh = isMessageFresh(t1,t2)
             if isFresh and hci == hashed:
                 self.sessionDB.add_client_challenge(clientIp, client_rand)
                 self.sessionDB.add_client_ID(clientIp, client_ID)
                 rs = random.randint(1, 100)
-                print("chosen random number {}".format(rs))
                 self.sessionDB.add_server_random(clientIp, str(rs))
                 server_rand = multiplyGeneratorByScalar(rs)
                 self.sessionDB.add_server_challenge(clientIp, server_rand)
-                print("server rand x {}".format(server_rand[0]))
-                print("server rand y {}".format(server_rand[1]))
-                client_rand_plus = plus_generator(client_rand[0],client_rand[1])
+                if self.sessionDB.get_long_key_status(clientIp):
+                    client_rand_plus = plus_2P(client_rand[0],client_rand[1])
+                else:
+                    client_rand_plus = plus_P(client_rand[0],client_rand[1])
                 enc_str = str(client_rand_plus[0]) + ' ' + str(client_rand_plus[1]) + ' ' + str(server_rand[0]) + ' ' + str(server_rand[1]) + ' ' + str(t2)
-                print("second message to be encrypted " + enc_str)
                 enc_bytes = bytes(enc_str, encoding='utf-8')
                 payload = encryption(enc_bytes, self.preSharedDB.get_client_key(client_ID))
+                print("size of encrypted second message {}".format(sys.getsizeof(payload)))
                 return aiocoap.Message(payload=payload)
         else:
             req = request.payload.decode('utf-8')
@@ -172,40 +168,25 @@ class KeyExchangeResourceServerAuth(resource.Resource):
             req = decryption(req,self.preSharedDB.get_client_key(client_ID))
             resp_x, resp_y, t3 = req.decode('utf-8').split(' ')
             t4 = getCurrrentTime()
-            print("T3 " + t3)
-            print("T4 " + t4)
             if isMessageFresh(t3,t4):
                 server_rand = self.sessionDB.get_server_challenge(clientIp)
-                if is_plus_generator(server_rand[0],server_rand[1], resp_x, resp_y):
+                challengeResponse = verifyChallenge(server_rand[0],server_rand[1], resp_x, resp_y)
+                if challengeResponse != -1:
                     rs = self.sessionDB.get_server_random(clientIp)
                     client_rand = self.sessionDB.get_client_challenge(clientIp)
-                    session_key = multiplyPointByScalar(rs, client_rand[0], client_rand[1])
-                    print('built session key x {}'.format(session_key[0]))
-                    print('built session key y {}'.format(session_key[1]))
+                    secret = multiplyPointByScalar(rs, client_rand[0], client_rand[1])
+                    sessionKey = PBKDF2(bytes(str(secret[0]), encoding='utf-8'),'', 16, count=16, hmac_hash_module=SHA512)
+                    print('built session key {}'.format(sessionKey))
+                    if challengeResponse == 2:
+                        Y = PBKDF2(bytes(str(secret[1]),encoding='utf-8'),'', 16, count=16, hmac_hash_module=SHA512)
+                        self.preSharedDB.set_client_key(client_ID, Y)
+                        print('new long-term key {}'.format(Y))
                     curr_time = round(time.time()*1000)
-                    print('finish time')
-                    print(curr_time)
-                    self.sessionDB.add_session_key(clientIp, session_key)
-            # client_response = request.payload.decode('utf-8').split(' ')
-            # server_rand_i = client_response[0]
-            # # Rc = client_response[1]
-            # server_rand = self.sessionDB.get_server_challenge(clientIp)
-            # if(server_rand == str(server_rand_i)):
-            #     # sessionKey = PRIVATE_KEY * int(Rc)
-            #     sessionKey = int(server_rand) * int(self.sessionDB.
-            #         get_client_challenge(clientIp))
-            #     #print(sessionKey)
-            #     self.sessionDB.remove_live_session(clientIp)
-            # return aiocoap.Message()
-        # #add session to database
-        # elif self.step == '2':
-        #     print("I'm over here now!")
-        #     #if isSessionCreated()
-        #     print("I got the third message")
-            # I could not add no_respnse option here in a clean way
-            # (by adding a No_RESPONSE option)
-                resp = aiocoap.Message(no_response=26)
-                return resp
+                    finishTime = curr_time
+                    print('elapsed time in mili-seconds: {}'.format(finishTime - startTime))
+                    self.sessionDB.add_session_key(clientIp, sessionKey)
+                    self.sessionDB.remove_live_session(clientIp)
+                return aiocoap.Message(no_response=26)
 
 
 class BlockResource(resource.Resource):
